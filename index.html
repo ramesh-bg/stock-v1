@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FIVESTAR — Delivery Analysis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+      * { font-family: "IBM Plex Sans", sans-serif; }
+      .mono { font-family: "IBM Plex Mono", monospace; }
+      body { background: #f0f2f5; }
+
+      .upload-zone {
+        border: 2px dashed #cbd5e1;
+        transition: all 0.2s;
+      }
+      .upload-zone:hover, .upload-zone.dragover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+      }
+      .upload-zone input[type="file"] {
+        position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+      }
+
+      .table-wrap { overflow: auto; max-height: 65vh; }
+      table thead tr th {
+        position: sticky; top: 0; z-index: 10; background: #1e293b;
+      }
+
+      tr:nth-child(even) td { background: #f8fafc; }
+      tr:hover td { background: #eff6ff !important; }
+
+      /* Result column — date highlight (bullish) */
+      td.res-date { background: #dcfce7 !important; font-weight: 700; color: #15803d; }
+      tr:hover td.res-date { background: #bbf7d0 !important; }
+
+      /* Result column — Exit */
+      td.res-exit { background: #fee2e2 !important; font-weight: 700; color: #b91c1c; }
+      tr:hover td.res-exit { background: #fecaca !important; }
+
+      /* TQ/NT column */
+      td.tqnt-col { background: #fef9c3 !important; font-weight: 600; color: #854d0e; }
+      tr:hover td.tqnt-col { background: #fef08a !important; }
+
+      th.sortable { cursor: pointer; user-select: none; }
+      th.sortable:hover { background: #2d3f55 !important; }
+      th.sort-asc .sort-icon::after { content: " ▲"; }
+      th.sort-desc .sort-icon::after { content: " ▼"; }
+      th:not(.sort-asc):not(.sort-desc) .sort-icon::after { content: " ⇅"; opacity: 0.4; }
+
+      .status-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      }
+      .status-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+      @media (max-width: 640px) { .scroll-hint { display: flex; } }
+      .scroll-hint { display: none; }
+    </style>
+  </head>
+  <body class="min-h-screen p-3 sm:p-6 lg:p-10">
+    <div class="max-w-7xl mx-auto">
+
+      <!-- Header -->
+      <div class="mb-5">
+        <h1 class="text-2xl sm:text-3xl font-bold text-slate-800 mono">FIVESTAR — Delivery Analysis</h1>
+        <p class="text-slate-500 text-sm mt-1">Upload the NSE equity CSV to analyse delivery vs traded quantity signals.</p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+
+        <!-- Upload -->
+        <div class="p-4 sm:p-6 border-b border-slate-100">
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Upload CSV</label>
+          <div class="upload-zone relative rounded-xl p-5 text-center cursor-pointer" id="uploadZone">
+            <input type="file" id="csvFile" accept=".csv" />
+            <div id="uploadContent">
+              <div class="text-4xl mb-2">📂</div>
+              <p class="text-slate-600 font-medium">Tap to upload CSV</p>
+              <p class="text-slate-400 text-xs mt-1">or drag &amp; drop here</p>
+            </div>
+            <div id="fileStatus" class="hidden">
+              <div class="status-badge bg-green-100 text-green-700">
+                <span class="status-dot bg-green-500"></span>
+                <span id="fileLabel">File loaded</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-2">Tap to change file</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Legend -->
+        <div id="legendBar" class="hidden px-4 sm:px-6 pt-4 pb-2 flex flex-wrap gap-4 text-xs text-slate-500">
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-3 h-3 rounded" style="background:#fef9c3;border:1px solid #ca8a04"></span> TQ/NT ratio
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-3 h-3 rounded" style="background:#dcfce7;border:1px solid #16a34a"></span>
+            Result = Date — Dly Qty ↑ &amp; % Dly ↑ vs prev day
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-3 h-3 rounded" style="background:#fee2e2;border:1px solid #b91c1c"></span>
+            Result = Exit — Dly Qty ↑, % Dly ↓ &amp; TQ/NT ↑ vs prev day
+          </span>
+        </div>
+
+        <!-- Table area -->
+        <div class="p-4 sm:p-6">
+          <div id="statsBar" class="hidden mb-3 flex flex-wrap gap-2">
+            <span class="status-badge bg-blue-100 text-blue-700 mono" id="rowCount">0 rows</span>
+            <span class="status-badge bg-green-100 text-green-700 mono" id="resultCount">0 signals</span>
+            <span class="status-badge bg-red-100 text-red-700 mono" id="exitCount">0 exits</span>
+          </div>
+
+          <div class="scroll-hint items-center gap-1 text-xs text-slate-400 mb-2">
+            <span>←</span><span>Scroll horizontally to see all columns</span><span>→</span>
+          </div>
+
+          <div id="emptyState" class="flex flex-col items-center justify-center py-16 text-center">
+            <div class="text-5xl mb-3 opacity-30">📊</div>
+            <p class="text-slate-400 text-sm">Upload a CSV to see the analysis</p>
+          </div>
+
+          <div class="table-wrap rounded-xl border border-slate-200 hidden" id="tableWrap">
+            <table id="table" class="min-w-full border-collapse text-sm"></table>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-center text-xs text-slate-400 mt-4 pb-4">All processing happens locally in your browser — no data is uploaded.</p>
+    </div>
+
+    <script>
+      let rows = [];        // parsed CSV rows (objects)
+      let headers = [];     // raw CSV headers
+      let enriched = [];    // rows with computed fields
+      let currentSort = { col: "Date", dir: "desc" };
+
+      // ── CSV Parser ────────────────────────────────────────────────────────────────
+      function parseCSVLine(line) {
+        const fields = [];
+        let i = 0;
+        while (i < line.length) {
+          if (line[i] === '"') {
+            i++;
+            let field = "";
+            while (i < line.length) {
+              if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
+              else if (line[i] === '"') { i++; break; }
+              else { field += line[i++]; }
+            }
+            fields.push(field);
+            if (line[i] === ',') i++;
+          } else {
+            let start = i;
+            while (i < line.length && line[i] !== ',') i++;
+            fields.push(line.slice(start, i));
+            if (line[i] === ',') i++;
+          }
+        }
+        return fields;
+      }
+
+      function parseCSV(csv) {
+        if (csv.charCodeAt(0) === 0xFEFF) csv = csv.slice(1);
+        const lines = csv.trim().split(/\r?\n/);
+        headers = parseCSVLine(lines[0]).map(h => h.trim());
+        rows = lines.slice(1).filter(l => l.trim()).map(line => {
+          const vals = parseCSVLine(line);
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = (vals[i] ?? "").trim());
+          return obj;
+        });
+      }
+
+      // ── Helpers ───────────────────────────────────────────────────────────────────
+      function parseNum(val) {
+        return Number(String(val ?? "").replace(/,/g, "").trim()) || 0;
+      }
+
+      function findCol(keywords) {
+        return headers.find(h => keywords.some(k => h.trim().toLowerCase().includes(k.toLowerCase())));
+      }
+
+      function parseDate(str) {
+        const months = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+        const m = str && str.match(/(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+        return m ? new Date(+m[3], months[m[2].toLowerCase()], +m[1]).getTime() : 0;
+      }
+
+      // ── Enrich ────────────────────────────────────────────────────────────────────
+      function enrichData() {
+        const dateCol   = findCol(["Date"]);
+        const dlyCol    = findCol(["Deliverable Qty", "Deliverable"]);
+        const pctCol    = findCol(["% Dly Qt", "% Dly"]);
+        const tqCol     = findCol(["Total Traded Quantity", "Traded Quantity"]);
+        const ntCol     = findCol(["No. of Trades", "Trades"]);
+
+        enriched = rows.map(row => ({
+          _raw: row,
+          date:    row[dateCol] ?? "",
+          dly:     parseNum(row[dlyCol]),
+          pct:     parseNum(row[pctCol]),
+          tq:      parseNum(row[tqCol]),
+          nt:      parseNum(row[ntCol]),
+          dateTs:  parseDate(row[dateCol] ?? ""),
+          tqnt:    0,
+          result:  "",
+        }));
+
+        // Compute TQ/NT
+        enriched.forEach(r => {
+          r.tqnt = r.nt ? +(r.tq / r.nt).toFixed(2) : 0;
+        });
+
+        // Sort date desc first so we can assign "prev day"
+        sortEnriched("Date", "desc");
+        assignResults();
+      }
+
+      function assignResults() {
+        // sorted latest-first; prev day = index + 1
+        enriched.forEach((row, i) => {
+          const prev = enriched[i + 1];
+          if (!prev) { row.result = ""; return; }
+
+          const dlyUp  = row.dly  > prev.dly;
+          const pctUp  = row.pct  > prev.pct;
+          const pctDn  = row.pct  < prev.pct;
+          const tqntUp = row.tqnt > prev.tqnt;
+
+          if (dlyUp && pctUp) {
+            row.result = "date";      // show date — bullish signal
+          } else if (dlyUp && pctDn && tqntUp) {
+            row.result = "exit";      // Exit signal
+          } else {
+            row.result = "";
+          }
+        });
+      }
+
+      // ── Sort ──────────────────────────────────────────────────────────────────────
+      function sortEnriched(col, dir) {
+        const d = dir === "asc" ? 1 : -1;
+        enriched.sort((a, b) => {
+          if (col === "Date")   return d * (a.dateTs - b.dateTs);
+          if (col === "TQ/NT") return d * (a.tqnt - b.tqnt);
+          if (col === "Dly Qty") return d * (a.dly - b.dly);
+          if (col === "% Dly") return d * (a.pct - b.pct);
+          return 0;
+        });
+      }
+
+      function sortBy(col) {
+        if (currentSort.col === col) {
+          currentSort.dir = currentSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          currentSort.col = col;
+          currentSort.dir = "desc";
+        }
+        sortEnriched(currentSort.col, currentSort.dir);
+        assignResults();
+        renderTable();
+      }
+
+      // ── Render ────────────────────────────────────────────────────────────────────
+      const COLS = [
+        { key: "sno",    label: "S.No",       sortable: false },
+        { key: "Date",   label: "Date",        sortable: true  },
+        { key: "Dly Qty",label: "Deliverable Qty", sortable: true  },
+        { key: "% Dly",  label: "% Dly Qty to Traded Qty", sortable: true  },
+        { key: "TQ/NT",  label: "TQ/NT",       sortable: true,  cls: "tqnt"   },
+        { key: "Result", label: "Result",       sortable: false, cls: "result" },
+      ];
+
+      function renderTable() {
+        const table = document.getElementById("table");
+
+        // THEAD
+        let thead = "<thead><tr>";
+        COLS.forEach(c => {
+          const sortClass  = c.sortable ? "sortable" : "";
+          const dirClass   = c.sortable && currentSort.col === c.key ? `sort-${currentSort.dir}` : "";
+          const colorClass = c.cls === "tqnt" ? "text-yellow-300"
+                           : c.cls === "result" ? "text-green-300"
+                           : "text-slate-300";
+          const click = c.sortable ? `onclick="sortBy('${c.key}')"` : "";
+          thead += `<th class="${sortClass} ${dirClass} border-b border-slate-600 p-2 sm:p-3 text-left ${colorClass} font-semibold text-xs mono whitespace-nowrap" ${click}>
+                      <span class="sort-icon">${c.label}</span></th>`;
+        });
+        thead += "</tr></thead>";
+
+        // TBODY
+        let tbody = "<tbody>";
+        let signalCount = 0, exitCount = 0;
+
+        enriched.forEach((row, i) => {
+          tbody += "<tr>";
+          COLS.forEach(c => {
+            if (c.key === "sno") {
+              tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 text-slate-400 mono text-xs">${i + 1}</td>`;
+            } else if (c.key === "Date") {
+              tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 text-slate-700 mono text-xs whitespace-nowrap">${row.date}</td>`;
+            } else if (c.key === "Dly Qty") {
+              tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 text-slate-700 mono text-xs whitespace-nowrap">${row.dly.toLocaleString("en-IN")}</td>`;
+            } else if (c.key === "% Dly") {
+              tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 text-slate-700 mono text-xs whitespace-nowrap">${row.pct.toFixed(2)}%</td>`;
+            } else if (c.key === "TQ/NT") {
+              tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 tqnt-col mono text-xs whitespace-nowrap">${row.tqnt.toLocaleString("en-IN")}</td>`;
+            } else if (c.key === "Result") {
+              if (row.result === "date") {
+                signalCount++;
+                tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 res-date mono text-xs whitespace-nowrap">${row.date}</td>`;
+              } else if (row.result === "exit") {
+                exitCount++;
+                tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 res-exit mono text-xs whitespace-nowrap">Exit</td>`;
+              } else {
+                tbody += `<td class="border-b border-slate-100 p-2 sm:p-3 text-slate-300 mono text-xs">—</td>`;
+              }
+            }
+          });
+          tbody += "</tr>";
+        });
+        tbody += "</tbody>";
+        table.innerHTML = thead + tbody;
+
+        // Update stats
+        document.getElementById("rowCount").textContent    = `${enriched.length} rows`;
+        document.getElementById("resultCount").textContent = `${signalCount} bullish signals`;
+        document.getElementById("exitCount").textContent   = `${exitCount} exit signals`;
+      }
+
+      // ── File loading ──────────────────────────────────────────────────────────────
+      const zone = document.getElementById("uploadZone");
+      zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
+      zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+      zone.addEventListener("drop", e => {
+        e.preventDefault(); zone.classList.remove("dragover");
+        const f = e.dataTransfer.files[0];
+        if (f && f.name.endsWith(".csv")) loadFile(f);
+        else alert("Please drop a .csv file");
+      });
+      document.getElementById("csvFile").addEventListener("change", e => {
+        if (e.target.files[0]) loadFile(e.target.files[0]);
+      });
+
+      function loadFile(file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          parseCSV(e.target.result);
+          enrichData();
+
+          document.getElementById("uploadContent").classList.add("hidden");
+          document.getElementById("fileStatus").classList.remove("hidden");
+          document.getElementById("fileLabel").textContent = `${file.name} — ${rows.length} rows`;
+
+          document.getElementById("emptyState").classList.add("hidden");
+          document.getElementById("tableWrap").classList.remove("hidden");
+          document.getElementById("statsBar").classList.remove("hidden");
+          document.getElementById("legendBar").classList.remove("hidden");
+
+          renderTable();
+        };
+        reader.readAsText(file);
+      }
+    </script>
+  </body>
+</html>
